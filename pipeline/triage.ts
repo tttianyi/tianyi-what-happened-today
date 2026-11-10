@@ -78,7 +78,7 @@ async function scoreBatch(batch: Article[], llm: LLMClient, label: string) {
 
       const secs = ((Date.now() - started) / 1000).toFixed(1);
       console.log(`  ✓ ${label}: ${byNumber.size}/${batch.length} scored, ${tokens} tokens, ${secs}s`);
-      return byNumber;
+      return { byNumber, tokens };
     } catch (err) {
       // key 错误重试也没用，直接停止（fail fast）/ A bad API key won't fix itself — stop now (fail fast)
       if (err instanceof Groq.AuthenticationError) throw err;
@@ -87,26 +87,29 @@ async function scoreBatch(batch: Article[], llm: LLMClient, label: string) {
       console.log(`  ✗ ${label} attempt ${attempt}: ${(err as Error).message.slice(0, 200)}`);
     }
   }
-  return new Map<number, TriageResult>(); // 降级：这批文章没有分数 / degrade: this batch stays unscored
+  // 降级：这批文章没有分数 / degrade: this batch stays unscored
+  return { byNumber: new Map<number, TriageResult>(), tokens: 0 };
 }
 
 /**
  * 按批次依次打分（串行而不是并行：免费版每分钟 token 有上限，并行只会更快撞上限）。
  * Score batch by batch, sequentially — the free tier caps tokens per minute, so parallel calls just hit it sooner.
  */
-export async function triage(articles: Article[], llm: LLMClient): Promise<TriagedArticle[]> {
+export async function triage(articles: Article[], llm: LLMClient) {
   const result: TriagedArticle[] = [];
+  let totalTokens = 0; // 记录用量，用来对照免费额度 / track usage against the free-tier quota
   const totalBatches = Math.ceil(articles.length / BATCH_SIZE);
 
   for (let start = 0; start < articles.length; start += BATCH_SIZE) {
     const batch = articles.slice(start, start + BATCH_SIZE);
     const label = `batch ${start / BATCH_SIZE + 1}/${totalBatches}`;
-    const scores = await scoreBatch(batch, llm, label);
+    const { byNumber, tokens } = await scoreBatch(batch, llm, label);
+    totalTokens += tokens;
 
     batch.forEach((article, i) => {
-      const s = scores.get(i + 1);
+      const s = byNumber.get(i + 1);
       result.push({ ...article, importance: s?.importance ?? null, topic: s?.topic ?? null });
     });
   }
-  return result;
+  return { articles: result, tokens: totalTokens };
 }

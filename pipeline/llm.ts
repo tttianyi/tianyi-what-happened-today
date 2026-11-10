@@ -23,7 +23,14 @@ export class GroqClient implements LLMClient {
   readonly name: string;
   private client: Groq;
 
-  constructor(private model: string) {
+  /**
+   * reasoningEffort：推理模型"想多少"。简单任务用 low（快、省 token），写作类任务用 medium。
+   * reasoningEffort: how much a reasoning model thinks. "low" for easy tasks (fast, fewer tokens), "medium" for writing.
+   */
+  constructor(
+    private model: string,
+    private reasoningEffort: "none" | "default" | "low" | "medium" | "high" = "low",
+  ) {
     this.name = `groq:${model}`;
     // 自动读取环境变量 GROQ_API_KEY / Reads GROQ_API_KEY from the environment.
     // SDK 自带重试：遇到 429（限流）和 5xx 会按 retry-after 等待后重试。默认 2 次，免费版限流较紧，调到 5 次。
@@ -45,9 +52,7 @@ export class GroqClient implements LLMClient {
         type: "json_schema",
         json_schema: { name: req.schemaName, strict: true, schema: z.toJSONSchema(req.schema) },
       },
-      // gpt-oss 是推理模型；打分是简单任务，少想一点 = 更快、更省 token
-      // gpt-oss is a reasoning model; scoring is easy, so less reasoning = faster, fewer tokens
-      reasoning_effort: "low",
+      reasoning_effort: this.reasoningEffort,
     });
 
     const text = res.choices[0]?.message.content ?? "";

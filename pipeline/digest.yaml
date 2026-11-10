@@ -1,0 +1,17 @@
+# 日报板块配置 / Digest section configuration
+# 每个板块从指定的源分类里，按 LLM 打的分数选出前 N 条。
+# Each section takes the top-N articles (by LLM importance) from the listed source categories.
+# 以后加新领域（比如住房、签证政策）就在这里加一个板块 / Add a new section here for new areas later.
+
+sections:
+  - id: ireland
+    title_en: Ireland
+    title_zh: 爱尔兰
+    categories: [ireland]          # 对应 sources.yaml 里的 category / matches `category` in sources.yaml
+    count: 3
+
+  - id: tech
+    title_en: Tech
+    title_zh: 科技
+    categories: [tech, ireland-tech] # Silicon Republic（爱尔兰科技）放在科技板块 / Silicon Republic goes under Tech
+    count: 7

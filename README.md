@@ -19,8 +19,9 @@ Trigger → Ingest → Normalize & Dedupe → LLM Processing (Structured Output)
 | Ingest / 获取数据 | ✅ | [`pipeline/ingest.ts`](pipeline/ingest.ts) |
 | Normalize & Dedupe / 清洗去重 | ✅ | [`pipeline/dedupe.ts`](pipeline/dedupe.ts) |
 | LLM Triage / LLM 打分分类 | ✅ | [`pipeline/llm.ts`](pipeline/llm.ts), [`pipeline/triage.ts`](pipeline/triage.ts) |
-| Bilingual Summary / 双语总结 | 🚧 | |
-| Classify & Route / 判断路由 | ⏳ | |
+| Classify & Route / 判断路由 | ✅ | [`pipeline/digest.yaml`](pipeline/digest.yaml), [`pipeline/select.ts`](pipeline/select.ts) |
+| Fetch selected articles / 抓取入选正文 | ✅ | [`pipeline/enrich.ts`](pipeline/enrich.ts) |
+| Bilingual Summary / 双语总结 | ✅ | [`pipeline/summarize.ts`](pipeline/summarize.ts) |
 | Deliver / 输出 | ⏳ | |
 | Schedule & Monitor / 定时与监控 | ⏳ | |
 
@@ -34,9 +35,9 @@ npm run pipeline   # run the pipeline / 运行流水线
 
 ## Design decisions / 设计决策
 
-**Public RSS only, no scraping. / 只用公开 RSS，不抓全文。**
-Feeds are stable, legal to consume, and already include a short summary. Paywalled sources (e.g. The Irish Times) contribute only their headline and feed snippet.
-RSS 稳定、合规，而且自带摘要。付费墙媒体只使用标题和 RSS 摘要。
+**RSS for discovery; full text only for the ~10 selected articles. / 用 RSS 发现新闻，只为入选的约 10 篇抓取正文。**
+Feed snippets turned out too thin to summarize: often one sentence, Hacker News items contain only links, and half of Irish Independent items are empty. So after selection, the pipeline fetches each chosen article once and extracts the main text with Mozilla Readability (first 3,000 chars). Rules: the text is passed to the LLM only and never stored or published; output is a summary plus a link to the original; blocked or paywalled pages (e.g. HTTP 403) are respected, not worked around, and fall back to the RSS snippet, labelled "snippet only".
+RSS 摘要太少，不够写总结：通常只有一句话，HN 只有链接，Independent 有一半是空的。所以选出文章后，只对这约 10 篇各访问一次，用 Mozilla Readability 提取正文（前 3000 字）。规则：正文只交给 LLM，不保存、不发布；输出只有总结和原文链接；被拒绝访问或有付费墙的页面（如 HTTP 403）不绕过，改用 RSS 摘要并标注"仅基于摘要"。
 
 **Config separate from code. / 配置与代码分离。**
 Adding a source is one entry in `sources.yaml`. The config is validated at startup so a bad entry fails fast with a clear error, instead of crashing halfway through a run.
@@ -88,6 +89,17 @@ Articles are sent as `[1]`, `[2]`… rather than 12-character IDs: fewer tokens,
 Batches run sequentially, not in parallel (the limit is tokens per minute). 429s are retried by the SDK using `retry-after`. A batch that still fails is retried once, then left unscored, so the run always finishes. An invalid API key stops the run immediately.
 批次串行执行（限制的是每分钟 token 数）。429 由 SDK 按 `retry-after` 自动重试。仍然失败的批次重试一次，再失败就标记为未打分，保证整个流程能跑完。API key 错误则立即停止。
 
+**Model choice was tested, not assumed. / 模型选择经过实测，而不是凭印象。**
+The plan was Qwen for Chinese summaries. Under Groq's strict JSON mode it failed on 5 of 10 articles (malformed output), and with low reasoning it added a claim not in the source. gpt-oss-120b succeeded 10/10 with natural Chinese, so both stages use it (low reasoning for triage, medium for summaries).
+原计划用 Qwen 写中文总结，但在 Groq 的 strict JSON 模式下 10 篇失败了 5 篇（输出格式错乱），低推理强度时还会多编一句原文没有的话。gpt-oss-120b 10/10 成功，中文自然，所以两段都用它（打分用 low，总结用 medium）。
+
+**One LLM call per summary. / 每篇总结单独调用。**
+Ten article texts in one request would exceed the free tier's 8K tokens per minute, and per-article calls keep failures isolated. A failed summary still appears in the digest as headline + link.
+10 篇正文放在一个请求里会超过免费版每分钟 8K token 的上限；分开调用也能让失败互不影响。总结失败的文章仍会以标题 + 链接出现在日报里。
+
+**Daily usage. / 每日用量。** One full run ≈ 35K tokens (triage ~20K + summaries ~15K), well inside the free tier's daily token limit.
+完整运行一次约 3.5 万 token（打分约 2 万 + 总结约 1.5 万），远低于免费版每日上限。
+
 ## Tech stack / 技术栈
 
-TypeScript · Node.js · rss-parser · zod · Groq (gpt-oss-120b) · Next.js (planned) · GitHub Actions (planned)
+TypeScript · Node.js · rss-parser · Mozilla Readability · zod · Groq (gpt-oss-120b) · Next.js (planned) · GitHub Actions (planned)
