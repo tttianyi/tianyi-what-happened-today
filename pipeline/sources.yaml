@@ -1,0 +1,47 @@
+# 新闻源配置 / News source configuration
+# 只用公开 RSS，不抓取全文 / Public RSS feeds only — we never scrape full articles.
+# 加新源只需在这里加一行，不用改代码 / Add a source here; no code change needed.
+
+sources:
+  # ---- 爱尔兰综合新闻 / Irish general news ----
+  - id: rte
+    name: RTÉ News
+    url: https://www.rte.ie/feeds/rss/?index=/news/
+    category: ireland
+
+  - id: thejournal
+    name: TheJournal.ie
+    url: https://www.thejournal.ie/feed/
+    category: ireland
+
+  - id: irishtimes
+    name: The Irish Times
+    url: https://www.irishtimes.com/arc/outboundfeeds/feed-irish-news/?outputType=xml
+    category: ireland
+
+  - id: independent
+    name: Irish Independent
+    url: https://www.independent.ie/irish-news/rss
+    category: ireland
+
+  # ---- 爱尔兰科技 / Irish tech ----
+  - id: siliconrepublic
+    name: Silicon Republic
+    url: https://www.siliconrepublic.com/feed
+    category: ireland-tech
+
+  # ---- 国际科技 / Global tech ----
+  - id: hackernews
+    name: Hacker News (100+ points)
+    url: https://hnrss.org/frontpage?points=100
+    category: tech
+
+  - id: techcrunch
+    name: TechCrunch
+    url: https://techcrunch.com/feed/
+    category: tech
+
+  - id: theverge
+    name: The Verge
+    url: https://www.theverge.com/rss/index.xml
+    category: tech
