@@ -6,7 +6,8 @@
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
     "sources": "tsx pipeline/config.ts",
-    "typecheck": "tsc"
+    "typecheck": "tsc",
+    "pipeline": "tsx pipeline/run.ts"
   },
   "keywords": [],
   "author": "",
@@ -18,6 +19,9 @@
     "typescript": "^7.0.2"
   },
   "dependencies": {
-    "yaml": "^2.9.1"
+    "groq-sdk": "^1.6.0",
+    "rss-parser": "^3.13.0",
+    "yaml": "^2.9.1",
+    "zod": "^4.6.7"
   }
 }
