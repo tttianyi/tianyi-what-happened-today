@@ -2,3 +2,6 @@ node_modules/
 .env
 .next/
 out/
+
+# 本地个人笔记，不推送 / local personal notes, not pushed
+NOTES.md
