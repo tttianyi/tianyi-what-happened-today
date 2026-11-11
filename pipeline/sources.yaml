@@ -1,5 +1,6 @@
 # 新闻源配置 / News source configuration
-# 只用公开 RSS，不抓取全文 / Public RSS feeds only — we never scrape full articles.
+# 用公开 RSS 发现新闻；只有入选日报的文章才抓取正文（见 enrich.ts）
+# Public RSS feeds for discovery; full text is fetched only for selected articles (see enrich.ts).
 # 加新源只需在这里加一行，不用改代码 / Add a source here; no code change needed.
 
 sources:
@@ -45,3 +46,41 @@ sources:
     name: The Verge
     url: https://www.theverge.com/rss/index.xml
     category: tech
+
+  # ---- 中国（英文国际媒体）/ China (international English-language media) ----
+  - id: scmp-china
+    name: South China Morning Post
+    url: https://www.scmp.com/rss/4/feed
+    category: china
+
+  - id: guardian-china
+    name: The Guardian (China)
+    url: https://www.theguardian.com/world/china/rss
+    category: china
+
+  # ---- 电影 / Film ----
+  - id: guardian-film
+    name: The Guardian (Film)
+    url: https://www.theguardian.com/film/rss
+    category: film
+
+  - id: variety-film
+    name: Variety (Film)
+    url: https://variety.com/v/film/feed/
+    category: film
+
+  # ---- 设计/美术/艺术 / Design & art ----
+  - id: dezeen
+    name: Dezeen
+    url: https://www.dezeen.com/feed/
+    category: design
+
+  - id: colossal
+    name: Colossal
+    url: https://www.thisiscolossal.com/feed/
+    category: design
+
+  - id: guardian-art
+    name: The Guardian (Art & Design)
+    url: https://www.theguardian.com/artanddesign/rss
+    category: design

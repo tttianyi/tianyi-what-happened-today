@@ -13,8 +13,17 @@ const SectionSchema = z.object({
   title_zh: z.string(),
   categories: z.array(z.string()).min(1),
   count: z.int().min(1),
+  rubric: z.string().min(1), // 本板块的评分标准，triage 会用到 / this section's scoring rubric, used by triage
 });
-const DigestConfigSchema = z.object({ sections: z.array(SectionSchema).min(1) });
+const DigestConfigSchema = z.object({ sections: z.array(SectionSchema).min(1) }).refine(
+  // 一个分类只能属于一个板块，否则同一篇文章会被打两次分、可能出现两次
+  // A category may belong to only one section; otherwise an article is scored twice and may appear twice
+  ({ sections }) => {
+    const all = sections.flatMap((s) => s.categories);
+    return new Set(all).size === all.length;
+  },
+  { message: "A category is listed in more than one section / 有分类被多个板块重复使用" },
+);
 export type Section = z.infer<typeof SectionSchema>;
 
 export async function loadSections(): Promise<Section[]> {
@@ -25,13 +34,23 @@ export async function loadSections(): Promise<Section[]> {
 export interface SelectedSection {
   section: Section;
   articles: TriagedArticle[];
+  sameSubjectSkipped: TriagedArticle[]; // 因同一主体被跳过的文章，方便检查规则效果 / skipped for repeating a subject, for checking the rule
 }
 
 /**
- * 每个板块：按源分类筛选 → 去掉未打分的 → 按分数排序 → 取前 N 条。
+ * 统一主体名的写法再比较："Anthropic " 和 "anthropic" 算同一个；"none" 表示没有单一主体，不参与限制。
+ * Normalize subjects before comparing: "Anthropic " and "anthropic" match; "none" means no single subject and is never limited.
+ */
+function subjectKey(subject: string | null): string | null {
+  const key = subject?.trim().toLowerCase() ?? "";
+  return key === "" || key === "none" ? null : key;
+}
+
+/**
+ * 每个板块：按源分类筛选 → 去掉未打分的 → 按分数排序 → 依次选取，同一主体最多 1 条，直到选够 N 条。
  * 分数相同时，较新的文章排在前面。
- * Per section: filter by source category → drop unscored → sort by importance → take top N.
- * Ties go to the more recent article.
+ * Per section: filter by source category → drop unscored → sort by importance → pick in order,
+ * at most one article per subject, until N are chosen. Ties go to the more recent article.
  */
 export function selectSections(articles: TriagedArticle[], sections: Section[]): SelectedSection[] {
   return sections.map((section) => {
@@ -42,6 +61,20 @@ export function selectSections(articles: TriagedArticle[], sections: Section[]):
           b.importance! - a.importance! || // 先比分数 / importance first
           b.publishedAt.localeCompare(a.publishedAt), // 再比时间（ISO 字符串可以直接比较）/ then recency (ISO strings sort correctly)
       );
-    return { section, articles: candidates.slice(0, section.count) };
+
+    const picked: TriagedArticle[] = [];
+    const sameSubjectSkipped: TriagedArticle[] = [];
+    const usedSubjects = new Set<string>();
+    for (const a of candidates) {
+      if (picked.length >= section.count) break;
+      const key = subjectKey(a.subject);
+      if (key && usedSubjects.has(key)) {
+        sameSubjectSkipped.push(a); // 这家公司已经有一条了 / this subject already has a slot
+        continue;
+      }
+      if (key) usedSubjects.add(key);
+      picked.push(a);
+    }
+    return { section, articles: picked, sameSubjectSkipped };
   });
 }

@@ -32,6 +32,7 @@ const SUMMARY_MODEL = "openai/gpt-oss-120b";
 
 console.log("① Load sources / 读取配置");
 const sources = await loadSources();
+const sections = await loadSections(); // 板块和评分标准也在开头校验 / sections + rubrics validated up front too
 
 console.log(`\n② Ingest last 24h / 抓取过去 24 小时 (${sources.length} sources)`);
 const { articles, failures } = await ingestAll(sources);
@@ -46,15 +47,16 @@ console.log(`  ${articles.length} fetched → ${removed.length} duplicates → $
 
 const llm = new GroqClient(TRIAGE_MODEL);
 console.log(`\n④ Triage / 打分分类 (${llm.name})`);
-const { articles: triaged, tokens: triageTokens } = await triage(kept, llm);
+const { articles: triaged, tokens: triageTokens } = await triage(kept, sections, llm);
 const unscored = triaged.filter((a) => a.importance === null).length;
 console.log(`  Unscored / 未打分: ${unscored}, tokens used / 用量: ${triageTokens}`);
 
 console.log("\n⑤ Select by section / 按板块选文章");
-const selected = selectSections(triaged, await loadSections());
-for (const { section, articles: picked } of selected) {
+const selected = selectSections(triaged, sections);
+for (const { section, articles: picked, sameSubjectSkipped } of selected) {
   console.log(`\n  ${section.title_en} / ${section.title_zh} (${picked.length}/${section.count})`);
-  for (const a of picked) console.log(`    ${a.importance} [${a.topic}] ${a.title} (${a.sourceId})`);
+  for (const a of picked) console.log(`    ${a.importance} [${a.topic}] {${a.subject}} ${a.title} (${a.sourceId})`);
+  for (const a of sameSubjectSkipped) console.log(`    ⤳ skipped, same subject / 同一主体跳过: ${a.importance} {${a.subject}} ${a.title}`);
 }
 
 console.log("\n⑥ Fetch article text / 抓取入选文章正文");

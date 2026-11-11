@@ -1,8 +1,8 @@
 # Irish News Digest 🇮🇪
 
-A self-running AI workflow that collects Irish and tech news every morning and writes a bilingual (English / 中文) digest.
+A self-running AI workflow that collects news every morning and writes a bilingual (English / 中文) digest: Ireland (3), Tech (4), China (1), Film (1), Design & Art (1).
 
-每天早上自动抓取爱尔兰本地新闻和科技新闻，生成中英双语摘要的 AI 自动化工作流。
+每天早上自动抓取新闻、生成中英双语摘要的 AI 自动化工作流：爱尔兰 3 条、科技 4 条、中国 1 条、电影 1 条、设计与艺术 1 条。
 
 > 🚧 Work in progress — built step by step. 正在一步一步搭建中。
 
@@ -73,8 +73,22 @@ Lessons from real data / 从真实数据中学到的：
   **不同标题报道同一件事，词重合法识别不了**，需要语义理解，计划在 LLM 步骤中解决。
 
 **Two-stage LLM processing. / 两段式 LLM 处理。**
-Stage 1 (triage) scores every article 1–5 and tags a topic, from the title plus the first 200 characters of the snippet only. Stage 2 writes bilingual summaries for the top articles alone. ~210 articles are triaged in 8 calls using ~23K tokens.
-第一段只看标题和摘要前 200 字，给每篇文章打分（1～5）和分类；第二段只给高分文章写双语总结。约 210 篇文章，8 次调用，约 2.3 万 token。
+Stage 1 (triage) scores every article 1–5 and tags a topic, from the title plus the first 200 characters of the snippet only. Stage 2 writes bilingual summaries for the top articles alone. ~260 articles are triaged in 11 calls using ~29K tokens.
+第一段只看标题和摘要前 200 字，给每篇文章打分（1～5）和分类；第二段只给高分文章写双语总结。约 260 篇文章，11 次调用，约 2.9 万 token。
+
+**One scoring rubric per section. / 每个板块一套评分标准。**
+With a single rubric ("matters to a reader in Ireland"), film and art stories almost always scored 1–2 next to Irish politics, so picking the top one in those sections was close to random. Now each section in `digest.yaml` has its own rubric, and its articles are batched together, so the model compares film with film, not film with the budget. This costs almost nothing extra: tokens are dominated by the articles, not the prompt, and articles that belong to no section are never scored. Adding a new area is config only: sources plus one section with its rubric. Config validation also rejects a category listed in two sections, which would score an article twice.
+只用一套标准（"对住在爱尔兰的读者有多重要"）时，电影和艺术类文章和爱尔兰政治放在一起比，几乎总是 1～2 分，这些板块选出哪篇基本靠运气。现在 `digest.yaml` 里每个板块有自己的评分标准，同板块的文章放在同一批里打分，模型拿电影和电影比，而不是和预算比。额外成本几乎为零：token 主要花在文章上而不是 prompt 上，不属于任何板块的文章也不会被打分。加新领域只需改配置：加源，再加一个带评分标准的板块。配置校验还会拒绝同一分类出现在两个板块中（否则一篇文章会被打两次分）。
+
+**Strict scoring, and one article per company. / 严格打分，同一公司只选一条。**
+- The first per-section run gave 8 of 10 picks a 5, so ties were decided by recency, not importance. The prompt now says most articles are 2–3 and at most one or two per batch get a 5. One test batch went from mostly 5s to 1–3 with two 4s.
+  第一次按板块打分时，10 篇入选文章里有 8 篇是 5 分，并列时只能按时间排，打分失去了意义。现在 prompt 要求多数文章 2～3 分、每批最多一两篇 5 分。一批测试结果从几乎全是 5 分变成了 1～3 分加两篇 4 分。
+- The tech section was 3 of 4 about Anthropic. Triage now also returns a `subject` (main company, organisation or person; products map to the parent company, e.g. Claude → Anthropic), and selection allows one article per subject per section. Cost: a few tokens per article, about 3% more per day. Keyword matching would have been free but can't tell that "Claude" means Anthropic.
+  科技板块 4 条里有 3 条是 Anthropic。现在打分时还会输出 `subject`（主要公司、机构或人物；产品归到母公司，如 Claude → Anthropic），选文章时每个板块里同一主体最多一条。成本是每篇多几个 token，每天约多 3%。用关键词匹配不花 token，但认不出 "Claude" 就是 Anthropic。
+
+**Be liberal in what you accept from the LLM. / 对 LLM 的输出要宽容接收。**
+`topic` used to be an enum in the JSON schema. When the model wrote one off-list value, Groq rejected the whole batch and 30 articles went unscored. Now `topic` is a string, the allowed list is in the prompt, and off-list values become `other` in code: one small slip no longer costs a whole batch.
+`topic` 原来是 JSON schema 里的枚举。模型只要写错一个值，Groq 就拒绝整批结果，30 篇文章都没有分数。现在 `topic` 是字符串，允许的值写在 prompt 里，列表外的值在代码里归为 `other`：一个小错不再影响整批。
 
 **Provider-agnostic LLM layer. / 不绑定某个 LLM 厂商。**
 The pipeline depends only on an `LLMClient` interface. Groq (free tier) is the current implementation; switching provider means adding one class.
@@ -100,14 +114,14 @@ The plan was Qwen for Chinese summaries. Under Groq's strict JSON mode it failed
 Ten article texts in one request would exceed the free tier's 8K tokens per minute, and per-article calls keep failures isolated. A failed summary still appears in the digest as headline + link.
 10 篇正文放在一个请求里会超过免费版每分钟 8K token 的上限；分开调用也能让失败互不影响。总结失败的文章仍会以标题 + 链接出现在日报里。
 
-**Daily usage. / 每日用量。** One full run ≈ 35K tokens (triage ~20K + summaries ~15K), well inside the free tier's daily token limit.
-完整运行一次约 3.5 万 token（打分约 2 万 + 总结约 1.5 万），远低于免费版每日上限。
+**Daily usage. / 每日用量。** One full run ≈ 46K tokens (triage ~29K + summaries ~17K), about a quarter of the free tier's daily token limit.
+完整运行一次约 4.6 万 token（打分约 2.9 万 + 总结约 1.7 万），约为免费版每日上限的四分之一。
 
 **Telegram delivery: HTML, split safely, fail loudly. / Telegram 推送：HTML 格式、安全拆分、失败要报错。**
 - HTML parse mode instead of MarkdownV2: only `& < >` need escaping, vs 18 characters in MarkdownV2 (including `. - ( ) !`, which are everywhere in news).
   用 HTML 而不是 MarkdownV2：只需转义 `& < >`，MarkdownV2 要转义 18 个字符（包括新闻里到处都是的 `. - ( ) !`）。
-- Telegram allows 4,096 characters per message. The digest is built as blocks (header, section titles, one per article) and split only between blocks, so an article or an HTML tag is never cut in half.
-  Telegram 每条消息最多 4096 字。日报按"块"（标题、板块名、每篇文章）组装，只在块之间拆分，文章和 HTML 标签都不会被截断。
+- One message per section (5 messages a day). A section is never split across messages, and only the first message notifies; the rest are sent silently. (The first version packed everything up to Telegram's 4,096-character limit, which cut sections in half.)
+  每个板块一条消息（每天 5 条），板块不会被拆开；只有第一条发出提醒，其余静默发送。（第一版把内容塞满 4096 字上限再拆分，结果板块被从中间切断。）
 - Telegram config is checked before any LLM call, so a missing setting costs zero tokens. A send failure makes the run exit as failed instead of passing silently.
   在调用 LLM 之前先检查 Telegram 配置，缺配置不浪费 token。发送失败时整个运行以失败退出，而不是悄悄"成功"。
 - The bot token is part of the API URL, so URLs are never logged.

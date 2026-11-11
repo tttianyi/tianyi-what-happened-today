@@ -65,21 +65,12 @@ function formatArticle(a: SummarizedArticle, n: number): string {
 }
 
 /**
- * 把日报排成若干个"块"（标题、板块名、每篇文章），再按 4096 字符上限装进多条消息。
- * 拆分只发生在块之间，所以一篇文章不会被拆到两条消息里，HTML 标签也不会被截断。
- * Build blocks (header, section titles, one per article), then pack them into messages under the limit.
- * Splits only happen between blocks, so an article is never cut in half and no HTML tag gets broken.
+ * 把若干"块"装进不超过上限的消息里，只在块之间拆分。
+ * 现在每个板块一条消息，正常情况下一个板块远小于 4096 字，这里只是兜底。
+ * Pack blocks into messages under the limit, splitting only between blocks.
+ * Each section is one message now and is normally far below 4,096 chars; this is just a safety net.
  */
-export function formatDigest(sections: DigestSection[], date = new Date()): string[] {
-  const day = date.toLocaleDateString("en-IE", { timeZone: "Europe/Dublin", weekday: "short", day: "numeric", month: "short", year: "numeric" });
-  const blocks: string[] = [`📰 <b>爱尔兰 &amp; 科技日报 / Irish &amp; Tech Digest</b>\n${day}`];
-
-  for (const { section, articles } of sections) {
-    if (articles.length === 0) continue;
-    blocks.push(`━━━━━━━━━━\n<b>${escapeHtml(section.title_zh)} / ${escapeHtml(section.title_en)}</b>`);
-    articles.forEach((a, i) => blocks.push(formatArticle(a, i + 1)));
-  }
-
+function pack(blocks: string[]): string[] {
   const messages: string[] = [];
   let current = "";
   for (const block of blocks) {
@@ -98,6 +89,27 @@ export function formatDigest(sections: DigestSection[], date = new Date()): stri
   return messages.map((m) => (m.length > TELEGRAM_MAX_CHARS ? m.slice(0, TELEGRAM_MAX_CHARS - 1) + "…" : m));
 }
 
+/**
+ * 每个板块一条消息：板块不会被切到两条消息里；日报标题放在第一条的开头。
+ * One message per section, so a section is never split across messages; the digest header opens the first one.
+ */
+export function formatDigest(sections: DigestSection[], date = new Date()): string[] {
+  const day = date.toLocaleDateString("en-IE", { timeZone: "Europe/Dublin", weekday: "short", day: "numeric", month: "short", year: "numeric" });
+  const header = `📰 <b>每日新闻 / Daily Digest</b>\n${day}`;
+
+  const messages: string[] = [];
+  for (const { section, articles } of sections) {
+    if (articles.length === 0) continue; // 空板块不发 / skip empty sections
+    const blocks = [
+      `<b>▍${escapeHtml(section.title_zh)} / ${escapeHtml(section.title_en)}</b>`,
+      ...articles.map((a, i) => formatArticle(a, i + 1)),
+    ];
+    if (messages.length === 0) blocks.unshift(header);
+    messages.push(...pack(blocks));
+  }
+  return messages;
+}
+
 // ── 发送 / Sending ────────────────────────────────────────────────
 
 interface TelegramResponse {
@@ -106,7 +118,7 @@ interface TelegramResponse {
   parameters?: { retry_after?: number };
 }
 
-async function sendMessage(cfg: TelegramConfig, text: string): Promise<void> {
+async function sendMessage(cfg: TelegramConfig, text: string, silent: boolean): Promise<void> {
   for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
     // 注意：token 在 URL 里，所以错误信息里绝不包含 URL
     // Note: the token is in the URL, so error messages never include it
@@ -119,6 +131,7 @@ async function sendMessage(cfg: TelegramConfig, text: string): Promise<void> {
         text,
         parse_mode: "HTML",
         link_preview_options: { is_disabled: true }, // 10 个链接预览会把消息撑得很长 / 10 previews would flood the chat
+        disable_notification: silent, // 只有第一条响铃，其余静默 / only the first message rings; the rest are silent
       }),
     });
     const body = (await res.json()) as TelegramResponse;
@@ -139,15 +152,15 @@ async function sendMessage(cfg: TelegramConfig, text: string): Promise<void> {
 }
 
 /**
- * 按顺序发送（不并行），保证消息在聊天里的顺序正确。
+ * 按顺序发送（不并行），保证消息在聊天里的顺序正确。只有第一条会发出提醒。
  * 发送失败会抛错，让整个流程以失败退出 —— 之后 GitHub Actions 会把这次运行标红，你会收到通知。
- * Sent in order (not in parallel) so the chat shows them in sequence.
+ * Sent in order (not in parallel) so the chat shows them in sequence. Only the first one notifies.
  * A failure throws, so the run exits as failed — later, GitHub Actions marks it red and notifies you.
  */
 export async function deliver(sections: DigestSection[], cfg: TelegramConfig): Promise<number> {
   const messages = formatDigest(sections);
   for (const [i, text] of messages.entries()) {
-    await sendMessage(cfg, text);
+    await sendMessage(cfg, text, i > 0);
     console.log(`  ✓ message ${i + 1}/${messages.length} sent (${text.length} chars)`);
   }
   return messages.length;
