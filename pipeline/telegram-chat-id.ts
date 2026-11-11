@@ -12,9 +12,9 @@ try {
   /* 没有 .env 文件也没关系 / no .env file is fine */
 }
 
-const token = process.env.TELEGRAM_BOT_TOKEN;
+const token = process.env.TELEGRAM_NEWS_BOT_TOKEN;
 if (!token) {
-  console.error("TELEGRAM_BOT_TOKEN is missing in .env / .env 里没有 TELEGRAM_BOT_TOKEN");
+  console.error("TELEGRAM_NEWS_BOT_TOKEN is missing in .env / .env 里没有 TELEGRAM_NEWS_BOT_TOKEN");
   process.exit(1);
 }
 
@@ -45,5 +45,5 @@ if (chats.size === 0) {
 } else {
   console.log("Chats found / 找到的 chat:");
   for (const [id, info] of chats) console.log(`  ${id}   ${info}`);
-  console.log("\nAdd yours to .env / 把你的 id 加到 .env:  TELEGRAM_CHAT_ID=<id>");
+  console.log("\nAdd yours to .env / 把你的 id 加到 .env:  TELEGRAM_NEWS_CHAT_ID=<id>");
 }

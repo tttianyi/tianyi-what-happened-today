@@ -22,9 +22,9 @@ export interface DigestSection {
  * Check config at the very start (fail fast): don't spend 35K tokens and only then find Telegram isn't set up.
  */
 export function loadTelegramConfig(): TelegramConfig {
-  const token = process.env.TELEGRAM_BOT_TOKEN;
-  const chatId = process.env.TELEGRAM_CHAT_ID;
-  const missing = [!token && "TELEGRAM_BOT_TOKEN", !chatId && "TELEGRAM_CHAT_ID"].filter(Boolean);
+  const token = process.env.TELEGRAM_NEWS_BOT_TOKEN;
+  const chatId = process.env.TELEGRAM_NEWS_CHAT_ID;
+  const missing = [!token && "TELEGRAM_NEWS_BOT_TOKEN", !chatId && "TELEGRAM_NEWS_CHAT_ID"].filter(Boolean);
   if (missing.length) throw new Error(`Missing env / 缺少环境变量: ${missing.join(", ")}`);
   return { token: token!, chatId: chatId! };
 }
