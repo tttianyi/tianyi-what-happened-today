@@ -22,15 +22,18 @@ Trigger → Ingest → Normalize & Dedupe → LLM Processing (Structured Output)
 | Classify & Route / 判断路由 | ✅ | [`pipeline/digest.yaml`](pipeline/digest.yaml), [`pipeline/select.ts`](pipeline/select.ts) |
 | Fetch selected articles / 抓取入选正文 | ✅ | [`pipeline/enrich.ts`](pipeline/enrich.ts) |
 | Bilingual Summary / 双语总结 | ✅ | [`pipeline/summarize.ts`](pipeline/summarize.ts) |
-| Deliver / 输出 | ⏳ | |
+| Deliver to Telegram / 推送到 Telegram | ✅ | [`pipeline/deliver.ts`](pipeline/deliver.ts) |
 | Schedule & Monitor / 定时与监控 | ⏳ | |
 
 ## Run locally / 本地运行
 
 ```bash
 npm install
-npm run sources    # list configured feeds / 列出新闻源
-npm run pipeline   # run the pipeline / 运行流水线
+npm run sources        # list configured feeds / 列出新闻源
+cp .env.example .env   # then fill in your keys / 然后填入你的 key
+npm run chat-id        # find your Telegram chat id / 查找 Telegram chat id
+npm run pipeline:dry   # run without sending / 运行但不发送（只打印）
+npm run pipeline       # run and send to Telegram / 运行并推送到 Telegram
 ```
 
 ## Design decisions / 设计决策
@@ -99,6 +102,16 @@ Ten article texts in one request would exceed the free tier's 8K tokens per minu
 
 **Daily usage. / 每日用量。** One full run ≈ 35K tokens (triage ~20K + summaries ~15K), well inside the free tier's daily token limit.
 完整运行一次约 3.5 万 token（打分约 2 万 + 总结约 1.5 万），远低于免费版每日上限。
+
+**Telegram delivery: HTML, split safely, fail loudly. / Telegram 推送：HTML 格式、安全拆分、失败要报错。**
+- HTML parse mode instead of MarkdownV2: only `& < >` need escaping, vs 18 characters in MarkdownV2 (including `. - ( ) !`, which are everywhere in news).
+  用 HTML 而不是 MarkdownV2：只需转义 `& < >`，MarkdownV2 要转义 18 个字符（包括新闻里到处都是的 `. - ( ) !`）。
+- Telegram allows 4,096 characters per message. The digest is built as blocks (header, section titles, one per article) and split only between blocks, so an article or an HTML tag is never cut in half.
+  Telegram 每条消息最多 4096 字。日报按"块"（标题、板块名、每篇文章）组装，只在块之间拆分，文章和 HTML 标签都不会被截断。
+- Telegram config is checked before any LLM call, so a missing setting costs zero tokens. A send failure makes the run exit as failed instead of passing silently.
+  在调用 LLM 之前先检查 Telegram 配置，缺配置不浪费 token。发送失败时整个运行以失败退出，而不是悄悄"成功"。
+- The bot token is part of the API URL, so URLs are never logged.
+  bot token 是 API URL 的一部分，所以日志里从不打印 URL。
 
 ## Tech stack / 技术栈
 

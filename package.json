@@ -7,7 +7,9 @@
     "test": "echo \"Error: no test specified\" && exit 1",
     "sources": "tsx pipeline/config.ts",
     "typecheck": "tsc",
-    "pipeline": "tsx pipeline/run.ts"
+    "pipeline": "tsx pipeline/run.ts",
+    "chat-id": "tsx pipeline/telegram-chat-id.ts",
+    "pipeline:dry": "tsx pipeline/run.ts --dry-run"
   },
   "keywords": [],
   "author": "",
