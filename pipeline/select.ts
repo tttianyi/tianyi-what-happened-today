@@ -4,6 +4,11 @@ import { readFile } from "node:fs/promises";
 import { parse } from "yaml";
 import { z } from "zod";
 import type { TriagedArticle } from "./triage.js";
+import type { LLMClient } from "./llm.js";
+import { groupStories } from "./stories.js";
+
+// 每个板块拿多少候选去做同一事件分组（板块篇数的倍数）/ how many candidates per section go to story grouping (× section count)
+const STORY_POOL_FACTOR = 3;
 
 // 这次直接用 zod 校验配置，不再手写 if 检查（对比 config.ts 的写法）
 // This time the config is validated with zod instead of hand-written ifs (compare with config.ts)
@@ -31,10 +36,15 @@ export async function loadSections(): Promise<Section[]> {
   return DigestConfigSchema.parse(parse(raw)).sections;
 }
 
+export interface SkippedArticle {
+  article: TriagedArticle;
+  reason: "same-story" | "same-subject"; // 同一事件 / 同一主体
+}
+
 export interface SelectedSection {
   section: Section;
   articles: TriagedArticle[];
-  sameSubjectSkipped: TriagedArticle[]; // 因同一主体被跳过的文章，方便检查规则效果 / skipped for repeating a subject, for checking the rule
+  skipped: SkippedArticle[]; // 被规则跳过的文章，方便检查规则效果 / skipped by the rules, for checking they work
 }
 
 /**
@@ -47,34 +57,68 @@ function subjectKey(subject: string | null): string | null {
 }
 
 /**
- * 每个板块：按源分类筛选 → 去掉未打分的 → 按分数排序 → 依次选取，同一主体最多 1 条，直到选够 N 条。
- * 分数相同时，较新的文章排在前面。
- * Per section: filter by source category → drop unscored → sort by importance → pick in order,
- * at most one article per subject, until N are chosen. Ties go to the more recent article.
+ * 板块候选：按源分类筛选 → 去掉未打分的 → 按分数排序；分数相同时，较新的文章排在前面。
+ * Section candidates: filter by source category → drop unscored → sort by importance; ties go to the more recent article.
  */
-export function selectSections(articles: TriagedArticle[], sections: Section[]): SelectedSection[] {
-  return sections.map((section) => {
-    const candidates = articles
-      .filter((a) => section.categories.includes(a.category) && a.importance !== null)
-      .sort(
-        (a, b) =>
-          b.importance! - a.importance! || // 先比分数 / importance first
-          b.publishedAt.localeCompare(a.publishedAt), // 再比时间（ISO 字符串可以直接比较）/ then recency (ISO strings sort correctly)
-      );
+function rankSection(articles: TriagedArticle[], section: Section): TriagedArticle[] {
+  return articles
+    .filter((a) => section.categories.includes(a.category) && a.importance !== null)
+    .sort(
+      (a, b) =>
+        b.importance! - a.importance! || // 先比分数 / importance first
+        b.publishedAt.localeCompare(a.publishedAt), // 再比时间（ISO 字符串可以直接比较）/ then recency (ISO strings sort correctly)
+    );
+}
 
-    const picked: TriagedArticle[] = [];
-    const sameSubjectSkipped: TriagedArticle[] = [];
-    const usedSubjects = new Set<string>();
-    for (const a of candidates) {
-      if (picked.length >= section.count) break;
-      const key = subjectKey(a.subject);
-      if (key && usedSubjects.has(key)) {
-        sameSubjectSkipped.push(a); // 这家公司已经有一条了 / this subject already has a slot
-        continue;
-      }
-      if (key) usedSubjects.add(key);
-      picked.push(a);
+/**
+ * 按排名依次选取，同一事件、同一主体各最多 1 条，直到选够 N 条。
+ * Pick in rank order, at most one article per story and per subject, until N are chosen.
+ */
+function pick(ranked: TriagedArticle[], count: number, storyOf: Map<string, number>) {
+  const articles: TriagedArticle[] = [];
+  const skipped: SkippedArticle[] = [];
+  const usedStories = new Set<number>();
+  const usedSubjects = new Set<string>();
+
+  for (const a of ranked) {
+    if (articles.length >= count) break;
+    const story = storyOf.get(a.id);
+    const subject = subjectKey(a.subject);
+    if (story !== undefined && usedStories.has(story)) {
+      skipped.push({ article: a, reason: "same-story" }); // 这件事已经有一篇了 / this story already has a slot
+      continue;
     }
-    return { section, articles: picked, sameSubjectSkipped };
-  });
+    if (subject && usedSubjects.has(subject)) {
+      skipped.push({ article: a, reason: "same-subject" }); // 这家公司已经有一篇了 / this subject already has a slot
+      continue;
+    }
+    if (story !== undefined) usedStories.add(story);
+    if (subject) usedSubjects.add(subject);
+    articles.push(a);
+  }
+  return { articles, skipped };
+}
+
+/**
+ * 每个板块：排序 → （选多于 1 篇的板块）把前 N×3 篇候选交给 LLM 找同一事件 → 按规则选出 N 篇。
+ * 只选 1 篇的板块不会有重复，所以不调用 LLM。
+ * Per section: rank → (sections picking more than one) send the top N×3 candidates to the LLM to find shared stories → pick N.
+ * Sections that pick only one can't have duplicates, so they skip the LLM call.
+ */
+export async function selectSections(articles: TriagedArticle[], sections: Section[], llm: LLMClient) {
+  const selected: SelectedSection[] = [];
+  let tokens = 0;
+
+  for (const section of sections) {
+    const ranked = rankSection(articles, section);
+    let storyOf = new Map<string, number>();
+    if (section.count > 1) {
+      const pool = ranked.slice(0, section.count * STORY_POOL_FACTOR);
+      const grouped = await groupStories(pool, llm, section.id);
+      storyOf = grouped.storyOf;
+      tokens += grouped.tokens;
+    }
+    selected.push({ section, ...pick(ranked, section.count, storyOf) });
+  }
+  return { selected, tokens };
 }

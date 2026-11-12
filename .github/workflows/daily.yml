@@ -9,6 +9,11 @@ on:
     # cron is in UTC: 06:30 UTC = 06:30 Irish winter time / 07:30 summer time.
     # Scheduled runs can be delayed at busy times, so we avoid the top of the hour and leave a margin.
     - cron: "30 6 * * *"
+    # 备用时间：GitHub 负载高时可能直接丢掉某次定时触发（第一天就遇到了），所以 08:00 再触发一次。
+    # 如果今天已经成功发送过，下面的 check 会让这次直接跳过，不会重复推送、也不花 token。
+    # Backup slot: under high load GitHub can drop a scheduled trigger entirely (it happened on day one),
+    # so we fire again at 08:00. If today's digest was already sent, `check` skips this run: no duplicate, no tokens.
+    - cron: "0 8 * * *"
   # 在 Actions 页面手动运行的按钮，用来测试 / A "Run workflow" button on the Actions page, for testing
   workflow_dispatch:
 
@@ -17,12 +22,34 @@ concurrency:
   group: daily-digest
   cancel-in-progress: false
 
-# 最小权限：只需要读代码 / Least privilege: the job only needs to read the code
+# 最小权限：读代码 + 读运行记录（用来判断今天是否已发送）
+# Least privilege: read the code + read run history (to see if today's digest was already sent)
 permissions:
   contents: read
+  actions: read
 
 jobs:
+  # 今天是否已经成功发送过？只对定时触发检查；手动运行总是执行，方便测试和补发。
+  # Already sent today? Checked for scheduled runs only; manual runs always go ahead (testing / resending).
+  check:
+    runs-on: ubuntu-latest
+    outputs:
+      skip: ${{ steps.today.outputs.skip }}
+    steps:
+      - id: today
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }} # GitHub 自动提供的临时 token，不需要额外 Secret / built-in temporary token, no extra Secret
+        run: |
+          today=$(date -u +%F)
+          sent=$(gh run list --repo "$GITHUB_REPOSITORY" --workflow daily.yml --status success \
+            --created ">=$today" --json databaseId --jq length)
+          echo "Successful runs today / 今天已成功运行: $sent"
+          if [ "$sent" -gt 0 ]; then echo "skip=true" >> "$GITHUB_OUTPUT"; fi
+
   digest:
+    needs: check
+    if: needs.check.outputs.skip != 'true'
     runs-on: ubuntu-latest
     # 正常约 5 分钟（主要是免费版限流等待）；卡住就停，不浪费额度
     # Normally ~5 minutes (mostly free-tier rate-limit waits); stop if it hangs

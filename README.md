@@ -22,7 +22,7 @@ Trigger → Ingest → Normalize & Dedupe → LLM Processing (Structured Output)
 | Ingest / 获取数据 | ✅ | [`pipeline/ingest.ts`](pipeline/ingest.ts) |
 | Normalize & Dedupe / 清洗去重 | ✅ | [`pipeline/dedupe.ts`](pipeline/dedupe.ts) |
 | LLM Triage / LLM 打分分类 | ✅ | [`pipeline/llm.ts`](pipeline/llm.ts), [`pipeline/triage.ts`](pipeline/triage.ts) |
-| Classify & Route / 判断路由 | ✅ | [`pipeline/digest.yaml`](pipeline/digest.yaml), [`pipeline/select.ts`](pipeline/select.ts) |
+| Classify & Route / 判断路由 | ✅ | [`pipeline/digest.yaml`](pipeline/digest.yaml), [`pipeline/select.ts`](pipeline/select.ts), [`pipeline/stories.ts`](pipeline/stories.ts) |
 | Fetch selected articles / 抓取入选正文 | ✅ | [`pipeline/enrich.ts`](pipeline/enrich.ts) |
 | Bilingual Summary / 双语总结 | ✅ | [`pipeline/summarize.ts`](pipeline/summarize.ts) |
 | Deliver to Telegram / 推送到 Telegram | ✅ | [`pipeline/deliver.ts`](pipeline/deliver.ts) |

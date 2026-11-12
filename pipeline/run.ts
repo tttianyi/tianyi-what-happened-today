@@ -52,11 +52,11 @@ const unscored = triaged.filter((a) => a.importance === null).length;
 console.log(`  Unscored / 未打分: ${unscored}, tokens used / 用量: ${triageTokens}`);
 
 console.log("\n⑤ Select by section / 按板块选文章");
-const selected = selectSections(triaged, sections);
-for (const { section, articles: picked, sameSubjectSkipped } of selected) {
+const { selected, tokens: storyTokens } = await selectSections(triaged, sections, llm);
+for (const { section, articles: picked, skipped } of selected) {
   console.log(`\n  ${section.title_en} / ${section.title_zh} (${picked.length}/${section.count})`);
   for (const a of picked) console.log(`    ${a.importance} [${a.topic}] {${a.subject}} ${a.title} (${a.sourceId})`);
-  for (const a of sameSubjectSkipped) console.log(`    ⤳ skipped, same subject / 同一主体跳过: ${a.importance} {${a.subject}} ${a.title}`);
+  for (const { article: a, reason } of skipped) console.log(`    ⤳ skipped [${reason}] ${a.importance} {${a.subject}} ${a.title}`);
 }
 
 console.log("\n⑥ Fetch article text / 抓取入选文章正文");
@@ -66,7 +66,8 @@ const summaryLlm = new GroqClient(SUMMARY_MODEL, "medium"); // 写作比打分�
 console.log(`\n⑦ Bilingual summaries / 双语总结 (${summaryLlm.name})`);
 const { articles: summarized, tokens: summaryTokens } = await summarize(enriched, summaryLlm);
 
-console.log(`\nTokens / 本次用量: triage ${triageTokens} + summary ${summaryTokens} = ${triageTokens + summaryTokens}`);
+const totalTokens = triageTokens + storyTokens + summaryTokens;
+console.log(`\nTokens / 本次用量: triage ${triageTokens} + stories ${storyTokens} + summary ${summaryTokens} = ${totalTokens}`);
 
 // 把扁平的总结结果按 id 放回各自的板块 / Put the flat summary results back into their sections by id
 const byId = new Map(summarized.map((a) => [a.id, a]));
