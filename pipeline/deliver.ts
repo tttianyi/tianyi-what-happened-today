@@ -4,7 +4,9 @@ import type { SummarizedArticle } from "./summarize.js";
 
 const TELEGRAM_MAX_CHARS = 4096; // Telegram 单条消息上限 / Telegram's per-message limit
 const SAFE_MAX_CHARS = 3900; // 留一点余量 / leave some headroom
-const SEND_ATTEMPTS = 3;
+// 重试前的等待秒数（逐渐加长）：一共尝试 4 次，大约能撑过 50 秒的网络中断
+// Seconds to wait before each retry (growing): 4 attempts in total, riding out ~50s of network trouble
+const RETRY_DELAYS_S = [5, 15, 30];
 
 export interface TelegramConfig {
   token: string;
@@ -118,50 +120,89 @@ interface TelegramResponse {
   parameters?: { retry_after?: number };
 }
 
+const sleep = (seconds: number) => new Promise((r) => setTimeout(r, seconds * 1000));
+
+/**
+ * 发送一条消息。三类错误分开处理：
+ *  - 网络错误 / 超时 / Telegram 5xx：临时问题，等一会儿重试（GitHub 服务器偶尔连不上 Telegram，实际遇到过）
+ *  - 429 限流：按 Telegram 给的 retry_after 等待后重试
+ *  - 其他 4xx（格式错误、token 错误、bot 被屏蔽）：重试也没用，直接报错
+ * Send one message. Three kinds of error, handled differently:
+ *  - network error / timeout / Telegram 5xx: temporary, wait and retry (GitHub's runner really did fail to reach Telegram once)
+ *  - 429 rate limit: wait for Telegram's retry_after, then retry
+ *  - other 4xx (bad format, bad token, bot blocked): retrying won't help, fail now
+ */
 async function sendMessage(cfg: TelegramConfig, text: string, silent: boolean): Promise<void> {
-  for (let attempt = 1; attempt <= SEND_ATTEMPTS; attempt++) {
-    // 注意：token 在 URL 里，所以错误信息里绝不包含 URL
-    // Note: the token is in the URL, so error messages never include it
-    const res = await fetch(`https://api.telegram.org/bot${cfg.token}/sendMessage`, {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      signal: AbortSignal.timeout(15_000),
-      body: JSON.stringify({
-        chat_id: cfg.chatId,
-        text,
-        parse_mode: "HTML",
-        link_preview_options: { is_disabled: true }, // 10 个链接预览会把消息撑得很长 / 10 previews would flood the chat
-        disable_notification: silent, // 只有第一条响铃，其余静默 / only the first message rings; the rest are silent
-      }),
-    });
-    const body = (await res.json()) as TelegramResponse;
+  for (let attempt = 1; ; attempt++) {
+    const delay = RETRY_DELAYS_S[attempt - 1]; // undefined = 没有重试机会了 / no retries left
+    let res: Response;
+    let body: TelegramResponse;
+    try {
+      // 注意：token 在 URL 里，所以错误信息里绝不包含 URL
+      // Note: the token is in the URL, so error messages never include it
+      res = await fetch(`https://api.telegram.org/bot${cfg.token}/sendMessage`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: AbortSignal.timeout(15_000),
+        body: JSON.stringify({
+          chat_id: cfg.chatId,
+          text,
+          parse_mode: "HTML",
+          link_preview_options: { is_disabled: true }, // 10 个链接预览会把消息撑得很长 / 10 previews would flood the chat
+          disable_notification: silent, // 只有第一条响铃，其余静默 / only the first message rings; the rest are silent
+        }),
+      });
+      body = (await res.json()) as TelegramResponse;
+    } catch (err) {
+      // 网络层失败（连不上、超时、返回的不是 JSON）/ network-level failure (can't connect, timeout, non-JSON reply)
+      const e = err as Error & { cause?: { code?: string } };
+      const reason = e.cause?.code ?? e.name; // 如 ETIMEDOUT / TimeoutError，不含 URL / e.g. ETIMEDOUT, never the URL
+      if (delay === undefined) throw new Error(`network error after ${attempt} attempts / 网络错误: ${reason}`);
+      console.log(`  … network error (${reason}), retrying in ${delay}s / 网络错误，${delay} 秒后重试`);
+      await sleep(delay);
+      continue;
+    }
+
     if (body.ok) return;
 
     // 429 限流：Telegram 会告诉我们等几秒 / 429 rate limit: Telegram tells us how long to wait
-    const wait = body.parameters?.retry_after;
-    if (res.status === 429 && wait && attempt < SEND_ATTEMPTS) {
-      console.log(`  … rate limited, waiting ${wait}s / 被限流，等待 ${wait} 秒`);
-      await new Promise((r) => setTimeout(r, wait * 1000));
+    const retryAfter = body.parameters?.retry_after;
+    if (res.status === 429 && retryAfter && delay !== undefined) {
+      console.log(`  … rate limited, waiting ${retryAfter}s / 被限流，等待 ${retryAfter} 秒`);
+      await sleep(retryAfter);
+      continue;
+    }
+    // 5xx：Telegram 服务器临时出错 / 5xx: temporary error on Telegram's side
+    if (res.status >= 500 && delay !== undefined) {
+      console.log(`  … Telegram ${res.status}, retrying in ${delay}s / ${delay} 秒后重试`);
+      await sleep(delay);
       continue;
     }
     // 其他错误（400 格式错误、401 token 错误、403 用户屏蔽了 bot）重试也没用，直接报错
     // Other errors (400 bad format, 401 bad token, 403 bot blocked) won't fix themselves: fail
     throw new Error(`Telegram ${res.status}: ${body.description}`);
   }
-  throw new Error("Telegram: still rate limited after retries / 重试后仍被限流");
 }
 
 /**
  * 按顺序发送（不并行），保证消息在聊天里的顺序正确。只有第一条会发出提醒。
- * 发送失败会抛错，让整个流程以失败退出 —— 之后 GitHub Actions 会把这次运行标红，你会收到通知。
+ * 一条失败不影响其他板块：全部尝试完后，如果有失败再抛错，让这次运行标红、GitHub 发邮件通知。
  * Sent in order (not in parallel) so the chat shows them in sequence. Only the first one notifies.
- * A failure throws, so the run exits as failed — later, GitHub Actions marks it red and notifies you.
+ * One failure doesn't block the other sections: after trying them all, any failure throws,
+ * so the run is marked red and GitHub emails you.
  */
 export async function deliver(sections: DigestSection[], cfg: TelegramConfig): Promise<number> {
   const messages = formatDigest(sections);
+  const failed: string[] = [];
   for (const [i, text] of messages.entries()) {
-    await sendMessage(cfg, text, i > 0);
-    console.log(`  ✓ message ${i + 1}/${messages.length} sent (${text.length} chars)`);
+    try {
+      await sendMessage(cfg, text, i > 0);
+      console.log(`  ✓ message ${i + 1}/${messages.length} sent (${text.length} chars)`);
+    } catch (err) {
+      console.log(`  ✗ message ${i + 1}/${messages.length} failed / 发送失败: ${(err as Error).message}`);
+      failed.push(`${i + 1}`);
+    }
   }
+  if (failed.length) throw new Error(`Telegram: message(s) ${failed.join(", ")} of ${messages.length} not sent / 未发送`);
   return messages.length;
 }
