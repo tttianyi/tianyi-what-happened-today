@@ -3,19 +3,23 @@
 name: Daily digest
 
 on:
-  schedule:
-    # cron 用的是 UTC 时间：06:30 UTC = 爱尔兰冬令时 06:30 / 夏令时 07:30
-    # GitHub 的定时任务高峰期可能延迟几分钟到半小时，所以避开整点，也给早上留出余量
-    # cron is in UTC: 06:30 UTC = 06:30 Irish winter time / 07:30 summer time.
-    # Scheduled runs can be delayed at busy times, so we avoid the top of the hour and leave a margin.
-    - cron: "30 6 * * *"
-    # 备用时间：GitHub 负载高时可能直接丢掉某次定时触发（第一天就遇到了），所以 08:00 再触发一次。
-    # 如果今天已经成功发送过，下面的 check 会让这次直接跳过，不会重复推送、也不花 token。
-    # Backup slot: under high load GitHub can drop a scheduled trigger entirely (it happened on day one),
-    # so we fire again at 08:00. If today's digest was already sent, `check` skips this run: no duplicate, no tokens.
-    - cron: "0 8 * * *"
-  # 在 Actions 页面手动运行的按钮，用来测试 / A "Run workflow" button on the Actions page, for testing
+  # 主触发：cron-job.org 每天按都柏林时间准时调用 GitHub API（workflow_dispatch），并传 skip_if_sent_today=true。
+  # GitHub 自带的定时任务不可靠（实测：两天只触发一次，还晚了 9 小时），所以只作为备用。
+  # Main trigger: cron-job.org calls the GitHub API (workflow_dispatch) on time every day, Dublin time,
+  # passing skip_if_sent_today=true. GitHub's own schedule proved unreliable (once in two days, 9 hours late),
+  # so it's only a backup.
   workflow_dispatch:
+    inputs:
+      skip_if_sent_today:
+        description: "Skip if today's digest was already sent / 今天已发送过就跳过"
+        type: boolean
+        default: false # 网页上手动运行默认总是执行，方便测试和补发 / manual runs always go ahead by default
+
+  # 备用：cron 用 UTC 时间。如果今天已经成功发送过，check 会让这次直接跳过，不重复推送、不花 token。
+  # Backup (cron is UTC). If today's digest was already sent, `check` skips the run: no duplicate, no tokens.
+  schedule:
+    - cron: "0 8 * * *"
+    - cron: "0 10 * * *"
 
 # 同一时间只跑一个，避免重复推送 / Only one run at a time, so the digest is never sent twice
 concurrency:
@@ -29,15 +33,16 @@ permissions:
   actions: read
 
 jobs:
-  # 今天是否已经成功发送过？只对定时触发检查；手动运行总是执行，方便测试和补发。
-  # Already sent today? Checked for scheduled runs only; manual runs always go ahead (testing / resending).
+  # 今天是否已经成功发送过？对备用定时任务和 cron-job.org 的触发做检查；网页手动运行默认不检查。
+  # Already sent today? Checked for backup schedules and cron-job.org triggers; manual runs skip the check by default.
   check:
     runs-on: ubuntu-latest
     outputs:
       skip: ${{ steps.today.outputs.skip }}
     steps:
       - id: today
-        if: github.event_name == 'schedule'
+        # API 触发时参数可能是字符串 "true"，所以两种都认 / via the API the input may arrive as the string "true"
+        if: github.event_name == 'schedule' || inputs.skip_if_sent_today == true || inputs.skip_if_sent_today == 'true'
         env:
           GH_TOKEN: ${{ github.token }} # GitHub 自动提供的临时 token，不需要额外 Secret / built-in temporary token, no extra Secret
         run: |
